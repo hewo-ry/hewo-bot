@@ -27,7 +27,8 @@ FROM python:3.13-slim-trixie
 
 LABEL maintainer="Max Mecklin <max.mecklin@hewo.fi>"
 
-COPY docker-entrypoint.sh alembic alembic.ini /app/
+COPY docker-entrypoint.sh alembic.ini /app/
+COPY alembic /app/alembic
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
