@@ -14,7 +14,7 @@ updates:
         applies-to: security-updates
 
     assignees:
-      - Natsku
+      - Natsku123
 
   - package-ecosystem: docker
     directory: /
@@ -27,7 +27,7 @@ updates:
         applies-to: security-updates
 
     assignees:
-      - Natsku
+      - Natsku123
 
   - package-ecosystem: github-actions
     directory: /
@@ -40,4 +40,4 @@ updates:
           - "*"
 
     assignees:
-      - Natsku
+      - Natsku123
