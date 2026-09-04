@@ -1,0 +1,43 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: daily
+
+    # Disable non-security version updates
+    open-pull-requests-limit: 0
+
+    groups:
+      security-updates:
+        dependency-type: production
+        applies-to: security-updates
+
+    assignees:
+      - Natsku123
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+    groups:
+      security-updates:
+        dependency-type: production
+        applies-to: security-updates
+
+    assignees:
+      - Natsku123
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+    groups:
+      updates:
+        patterns:
+          - "*"
+
+    assignees:
+      - Natsku123
