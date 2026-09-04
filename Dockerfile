@@ -1,4 +1,4 @@
-FROM python:3.13-slim-trixie AS builder
+FROM python:3.14-slim-trixie AS builder
 
 # Install UV package manager
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gcc python3-dev musl-dev git
@@ -23,7 +23,7 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --compile-bytecode
 
-FROM python:3.13-slim-trixie
+FROM python:3.14-slim-trixie
 
 LABEL maintainer="Max Mecklin <max.mecklin@hewo.fi>"
 
