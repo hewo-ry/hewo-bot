@@ -2,11 +2,12 @@ import datetime
 
 from nextcord.scheduled_events import ScheduledEvent
 
+
 def parse_google_time(time_obj: dict) -> datetime.datetime:
     """Parse a Google Calendar start/end object, assuming UTC for date-only (all-day) values which are naive."""
     dt = datetime.datetime.fromisoformat(time_obj.get("dateTime", time_obj.get("date")))
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=datetime.timezone.utc)
+        dt = dt.replace(tzinfo=datetime.UTC)
     return dt
 
 def compare_events(g_event: dict, d_event: ScheduledEvent):

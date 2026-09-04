@@ -78,157 +78,145 @@ class Calendar(commands.Cog):
     async def update_calendar(self):
         # Catch everything so no exception ever escapes and kills this task loop forever;
         # a failed run just gets logged and retried on the next hourly tick.
-        try:
-            creds = service_account.Credentials.from_service_account_file(
-                settings.SERVICE_ACCOUNT_FILE,
-                scopes=["https://www.googleapis.com/auth/calendar.readonly"],
-            )
+        creds = service_account.Credentials.from_service_account_file(
+            settings.SERVICE_ACCOUNT_FILE,
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+        )
 
-            service = build("calendar", "v3", credentials=creds)
+        service = build("calendar", "v3", credentials=creds)
 
-            # Call the Calendar API
-            now = datetime.datetime.now(tz=datetime.UTC).isoformat()
-            async with session_lock:
-                with Session(engine) as session:
-                    for calendar in get_calendars(session):
-                        # Never let a single calendar's failure abort the whole hourly run.
-                        try:
-                            guild = self.bot.get_guild(calendar.discord_id)
+        # Call the Calendar API
+        now = datetime.datetime.now(tz=datetime.UTC).isoformat()
+        async with session_lock:
+            with Session(engine) as session:
+                for calendar in get_calendars(session):
+                    # Never let a single calendar's failure abort the whole hourly run.
+                    guild = self.bot.get_guild(calendar.discord_id)
 
-                            # Skip if guild not found
-                            if not guild:
-                                logger.debug(f"Guild {calendar.discord_id} not found in cache, skipping calendar {calendar.google_id}")
+                    # Skip if guild not found
+                    if not guild:
+                        logger.debug(f"Guild {calendar.discord_id} not found in cache, skipping calendar {calendar.google_id}")
+                        continue
+
+                    logger.info(f"Updating calendar for {guild.name}")
+
+                    events_to_update = []
+                    events_to_create = []
+
+                    events_result = (
+                        service.events()
+                        .list(
+                            calendarId=calendar.google_id,
+                            timeMin=now,
+                            maxResults=settings.NUM_TRACK_EVENTS,
+                            singleEvents=True,
+                            orderBy="startTime",
+                        )
+                        .execute()
+                    )
+                    google_events = events_result.get("items", [])
+
+                    logger.info(f"Found {len(google_events)} events in Google Calendar")
+
+                    for g_event in google_events:
+                        event = get_event_by_google_id(session, g_event["id"])
+
+                        update_obj = {
+                            "google_event": g_event,
+                            "db_event": event,
+                            "discord_event": None
+                        }
+
+                        # Set event for update if found
+                        if event:
+                            d_event = guild.get_scheduled_event(event.discord_id)
+
+                            update_obj["discord_event"] = d_event
+
+                            if not d_event:
+                                logger.debug(f"No Discord event found for google event {g_event['id']}, will create")
+                                events_to_create.append(update_obj)
                                 continue
 
-                            logger.info(f"Updating calendar for {guild.name}")
-
-                            events_to_update = []
-                            events_to_create = []
-
-                            events_result = (
-                                service.events()
-                                .list(
-                                    calendarId=calendar.google_id,
-                                    timeMin=now,
-                                    maxResults=settings.NUM_TRACK_EVENTS,
-                                    singleEvents=True,
-                                    orderBy="startTime",
-                                )
-                                .execute()
+                            # Check if there are changes
+                            same = compare_events(g_event, d_event)
+                            logger.debug(
+                                f"Compared google event {g_event['id']} ({g_event.get('summary')}) "
+                                f"to discord event {d_event.id}: same={same} "
+                                f"(g_start={parse_google_time(g_event['start'])}, d_start={d_event.start_time}, "
+                                f"g_end={parse_google_time(g_event['end'])}, d_end={d_event.end_time})"
                             )
-                            google_events = events_result.get("items", [])
+                            if not same:
+                                events_to_update.append(update_obj)
 
-                            logger.info(f"Found {len(google_events)} events in Google Calendar")
+                        # Else set for creation
+                        else:
+                            logger.debug(f"No EventLink found for google event {g_event['id']}, will create")
+                            events_to_create.append(update_obj)
 
-                            for g_event in google_events:
-                                event = get_event_by_google_id(session, g_event["id"])
+                    logger.info(f"Processing {len(events_to_update)} updates and {len(events_to_create)} creations")
 
-                                update_obj = {
-                                    "google_event": g_event,
-                                    "db_event": event,
-                                    "discord_event": None
-                                }
+                    # Process updates
+                    for event_data in events_to_update:
+                        g_event = event_data["google_event"]
+                        d_event = event_data["discord_event"]
 
-                                # Set event for update if found
-                                if event:
-                                    d_event = guild.get_scheduled_event(event.discord_id)
+                        if not d_event:
+                            continue
 
-                                    update_obj["discord_event"] = d_event
+                        try:
+                            start_time = parse_google_time(g_event["start"])
+                            end_time = parse_google_time(g_event["end"])
 
-                                    if not d_event:
-                                        logger.debug(f"No Discord event found for google event {g_event['id']}, will create")
-                                        events_to_create.append(update_obj)
-                                        continue
+                            logger.debug(f"Editing discord event {d_event.id}: name={g_event['summary']!r}, start={start_time}, end={end_time}")
 
-                                    # Check if there are changes
-                                    same = compare_events(g_event, d_event)
-                                    logger.debug(
-                                        f"Compared google event {g_event['id']} ({g_event.get('summary')}) "
-                                        f"to discord event {d_event.id}: same={same} "
-                                        f"(g_start={parse_google_time(g_event['start'])}, d_start={d_event.start_time}, "
-                                        f"g_end={parse_google_time(g_event['end'])}, d_end={d_event.end_time})"
-                                    )
-                                    if not same:
-                                        events_to_update.append(update_obj)
+                            await d_event.edit(
+                                name=g_event["summary"],
+                                description=g_event.get("description", ""),
+                                start_time=start_time,
+                                end_time=end_time
+                            )
 
-                                # Else set for creation
-                                else:
-                                    logger.debug(f"No EventLink found for google event {g_event['id']}, will create")
-                                    events_to_create.append(update_obj)
+                            event_data["db_event"].discord_id = d_event.id
+                            session.add(event_data["db_event"])
+                            session.commit()
+                        except nextcord.Forbidden:
+                            logger.warning(f"Missing permissions to edit event {d_event.id} in guild {guild.name}, probably modified manually.")
 
-                            logger.info(f"Processing {len(events_to_update)} updates and {len(events_to_create)} creations")
+                    # Process creations
+                    for event_data in events_to_create:
+                        g_event = event_data["google_event"]
+                        db_event = event_data["db_event"]
 
-                            # Process updates
-                            for event_data in events_to_update:
-                                g_event = event_data["google_event"]
-                                d_event = event_data["discord_event"]
+                        start_time = parse_google_time(g_event["start"])
+                        end_time = parse_google_time(g_event["end"])
 
-                                if not d_event:
-                                    continue
+                        logger.debug(f"Creating discord event for google event {g_event['id']}: name={g_event['summary']!r}, start={start_time}, end={end_time}")
 
-                                try:
-                                    start_time = parse_google_time(g_event["start"])
-                                    end_time = parse_google_time(g_event["end"])
+                        d_event = await guild.create_scheduled_event(
+                            name=g_event["summary"],
+                            description=g_event.get("description", ""),
+                            start_time=start_time,
+                            end_time=end_time,
+                            metadata=EntityMetadata(location=g_event.get("location", "")),
+                            entity_type=ScheduledEventEntityType.external,
+                            privacy_level=ScheduledEventPrivacyLevel.guild_only,
+                            reason="Syncing from Google Calendar"
+                        )
 
-                                    logger.debug(f"Editing discord event {d_event.id}: name={g_event['summary']!r}, start={start_time}, end={end_time}")
+                        # Save to database
+                        if db_event:
+                            db_event.discord_id = d_event.id
+                        else:
+                            db_event = EventLink(
+                                google_id=g_event["id"],
+                                discord_id=d_event.id
+                            )
+                        session.add(db_event)
+                        session.commit()
 
-                                    await d_event.edit(
-                                        name=g_event["summary"],
-                                        description=g_event.get("description", ""),
-                                        start_time=start_time,
-                                        end_time=end_time
-                                    )
-
-                                    event_data["db_event"].discord_id = d_event.id
-                                    session.add(event_data["db_event"])
-                                    session.commit()
-                                except nextcord.Forbidden:
-                                    logger.warning(f"Missing permissions to edit event {d_event.id} in guild {guild.name}, probably modified manually.")
-                                except Exception:
-                                    logger.exception(f"Failed to update discord event {d_event.id} for google event {g_event.get('id')} in guild {guild.name}")
-
-                            # Process creations
-                            for event_data in events_to_create:
-                                g_event = event_data["google_event"]
-                                db_event = event_data["db_event"]
-
-                                try:
-                                    start_time = parse_google_time(g_event["start"])
-                                    end_time = parse_google_time(g_event["end"])
-
-                                    logger.debug(f"Creating discord event for google event {g_event['id']}: name={g_event['summary']!r}, start={start_time}, end={end_time}")
-
-                                    d_event = await guild.create_scheduled_event(
-                                        name=g_event["summary"],
-                                        description=g_event.get("description", ""),
-                                        start_time=start_time,
-                                        end_time=end_time,
-                                        metadata=EntityMetadata(location=g_event.get("location", "")),
-                                        entity_type=ScheduledEventEntityType.external,
-                                        privacy_level=ScheduledEventPrivacyLevel.guild_only,
-                                        reason="Syncing from Google Calendar"
-                                    )
-
-                                    # Save to database
-                                    if db_event:
-                                        db_event.discord_id = d_event.id
-                                    else:
-                                        db_event = EventLink(
-                                            google_id=g_event["id"],
-                                            discord_id=d_event.id
-                                        )
-                                    session.add(db_event)
-                                    session.commit()
-
-                                    await asyncio.sleep(1)  # To avoid hitting rate limits
-                                except Exception:
-                                    logger.exception(f"Failed to create discord event for google event {g_event.get('id')} in guild {guild.name}")
-
-                            logger.info(f"Calendar update for {guild.name} complete.")
-                        except Exception:
-                            logger.exception(f"Failed to update calendar {calendar.google_id} for guild {calendar.discord_id}")
-        except Exception:
-            logger.exception("Unhandled error in update_calendar loop iteration; will retry next scheduled run.")
+                        await asyncio.sleep(1)  # To avoid hitting rate limits
+                    logger.info(f"Calendar update for {guild.name} complete.")
 
 
     @update_calendar.before_loop
