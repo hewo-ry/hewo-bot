@@ -1,18 +1,13 @@
 import asyncio
+
 from sqlmodel import create_engine
 
+# Needed for Alembic migrations
+from database.models import *
 from utils.config import settings
 
-# Needed for Alembic migrations
-from database.models import * # noqa: F403
-
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://{username}:{password}@{server}/{db}" \
-    .format(
-    username=settings.DATABASE_USER,
-    password=settings.DATABASE_PASSWORD,
-    server=settings.DATABASE_SERVER,
-    db=settings.DATABASE_NAME
-)
+SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{settings.DATABASE_USER}:{settings.DATABASE_PASSWORD}@{settings.DATABASE_SERVER}/{settings.DATABASE_NAME}" \
+    
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 

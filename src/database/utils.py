@@ -1,9 +1,10 @@
-from typing import Type
-from sqlmodel import SQLModel, Session, col, select
+
+from sqlmodel import Session, SQLModel, col, select
 
 from database.models import Calendar, EventLink
 
-def get_all(session: Session, model: Type[SQLModel]):
+
+def get_all(session: Session, model: type[SQLModel]):
     statement = select(model)
     results = session.exec(statement).all()
     return results

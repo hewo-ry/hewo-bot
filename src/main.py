@@ -1,9 +1,11 @@
 import signal
+
 import nextcord
 from nextcord.ext import commands
 
-from utils.config import settings, logger
 from cogs.calendar import Calendar
+from utils.config import logger, settings
+
 
 def main():
     intents = nextcord.Intents.default()
