@@ -1,4 +1,5 @@
-from sqlmodel import Field, SQLModel, BigInteger
+from sqlmodel import BigInteger, Field, SQLModel
+
 
 class EventLink(SQLModel, table=True):
     google_id: str = Field(primary_key=True)

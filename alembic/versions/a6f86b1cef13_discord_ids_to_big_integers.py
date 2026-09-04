@@ -5,18 +5,18 @@ Revises: 5e732858f168
 Create Date: 2025-12-13 15:33:47.726544
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+import sqlmodel
 
 from alembic import op
-import sqlalchemy as sa
-
-import sqlmodel
 
 # revision identifiers, used by Alembic.
 revision: str = 'a6f86b1cef13'
-down_revision: Union[str, Sequence[str], None] = '5e732858f168'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = '5e732858f168'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

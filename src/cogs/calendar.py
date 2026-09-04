@@ -1,18 +1,32 @@
-import nextcord
-import datetime
 import asyncio
+import datetime
 
-from nextcord import EntityMetadata, Permissions, ScheduledEventEntityType, slash_command, TextChannel, ScheduledEventPrivacyLevel
-from sqlmodel import Session
-from nextcord.ext import commands, tasks
+import nextcord
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from nextcord import (
+    EntityMetadata,
+    Permissions,
+    ScheduledEventEntityType,
+    ScheduledEventPrivacyLevel,
+    TextChannel,
+    slash_command,
+)
+from nextcord.ext import commands, tasks
+from sqlmodel import Session
 
 from cogs import compare_events
-from utils.config import settings, logger
 from database import engine, session_lock
-from database.utils import get_event_by_google_id, get_event_by_discord_id, get_calendars, get_calendar
-from database.models import EventLink, Calendar as CalendarModel
+from database.models import Calendar as CalendarModel
+from database.models import EventLink
+from database.utils import (
+    get_calendar,
+    get_calendars,
+    get_event_by_discord_id,
+    get_event_by_google_id,
+)
+from utils.config import logger, settings
+
 
 class Calendar(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -73,7 +87,7 @@ class Calendar(commands.Cog):
         service = build("calendar", "v3", credentials=creds)
 
         # Call the Calendar API
-        now = datetime.datetime.now(tz=datetime.timezone.utc).isoformat()
+        now = datetime.datetime.now(tz=datetime.UTC).isoformat()
         async with session_lock:
             with Session(engine) as session:
                 for calendar in get_calendars(session):

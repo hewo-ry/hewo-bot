@@ -2,6 +2,7 @@ import datetime
 
 from nextcord.scheduled_events import ScheduledEvent
 
+
 def compare_events(g_event: dict, d_event: ScheduledEvent):
     isSame = True
     isSame = isSame and (d_event.name == g_event["summary"])
