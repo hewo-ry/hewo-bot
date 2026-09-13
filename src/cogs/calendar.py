@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from typing import TypedDict, cast
 
 import nextcord
 from google.oauth2 import service_account
@@ -13,6 +14,7 @@ from nextcord import (
     slash_command,
 )
 from nextcord.ext import commands, tasks
+from nextcord.scheduled_events import ScheduledEvent
 from sqlmodel import Session
 
 from cogs import compare_events, parse_google_time
@@ -26,6 +28,26 @@ from database.utils import (
     get_event_by_google_id,
 )
 from utils.config import logger, settings
+
+
+class GoogleTime(TypedDict, total=False):
+    dateTime: str
+    date: str
+
+
+class GoogleEvent(TypedDict):
+    id: str
+    summary: str
+    start: GoogleTime
+    end: GoogleTime
+    description: str
+    location: str
+
+
+class EventSyncData(TypedDict):
+    google_event: GoogleEvent
+    db_event: EventLink | None
+    discord_event: ScheduledEvent | None
 
 
 class Calendar(commands.Cog):
@@ -100,8 +122,8 @@ class Calendar(commands.Cog):
 
                     logger.info(f"Updating calendar for {guild.name}")
 
-                    events_to_update = []
-                    events_to_create = []
+                    events_to_update: list[EventSyncData] = []
+                    events_to_create: list[EventSyncData] = []
 
                     events_result = (
                         service.events()
@@ -114,14 +136,14 @@ class Calendar(commands.Cog):
                         )
                         .execute()
                     )
-                    google_events = events_result.get("items", [])
+                    google_events = cast(list[GoogleEvent], events_result.get("items", []))
 
                     logger.info(f"Found {len(google_events)} events in Google Calendar")
 
                     for g_event in google_events:
                         event = get_event_by_google_id(session, g_event["id"])
 
-                        update_obj = {
+                        update_obj: EventSyncData = {
                             "google_event": g_event,
                             "db_event": event,
                             "discord_event": None
@@ -165,6 +187,10 @@ class Calendar(commands.Cog):
                             continue
 
                         try:
+                            db_event = event_data["db_event"]
+                            if not db_event:
+                                continue
+
                             start_time = parse_google_time(g_event["start"])
                             end_time = parse_google_time(g_event["end"])
 
@@ -177,8 +203,8 @@ class Calendar(commands.Cog):
                                 end_time=end_time
                             )
 
-                            event_data["db_event"].discord_id = d_event.id
-                            session.add(event_data["db_event"])
+                            db_event.discord_id = d_event.id
+                            session.add(db_event)
                             session.commit()
                         except nextcord.Forbidden:
                             logger.warning(f"Missing permissions to edit event {d_event.id} in guild {guild.name}, probably modified manually.")
