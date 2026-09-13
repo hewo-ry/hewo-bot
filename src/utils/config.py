@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     NUM_TRACK_EVENTS: int = int(os.environ.get("NUM_TRACK_EVENTS", "10"))
 
+    LOG_LEVEL: str = os.environ.get("LOG_LEVEL", "INFO")
+
     class Config:
         case_sensitive = True
 
@@ -26,7 +28,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 logger = logging.getLogger('discord')
-logger.setLevel(logging.INFO)
+logger.setLevel(settings.LOG_LEVEL)
 handler = logging.StreamHandler()
 handler.setFormatter(
     logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s')

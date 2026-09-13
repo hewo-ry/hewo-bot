@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from typing import TypedDict, cast
 
 import nextcord
 from google.oauth2 import service_account
@@ -13,9 +14,10 @@ from nextcord import (
     slash_command,
 )
 from nextcord.ext import commands, tasks
+from nextcord.scheduled_events import ScheduledEvent
 from sqlmodel import Session
 
-from cogs import compare_events
+from cogs import compare_events, parse_google_time
 from database import engine, session_lock
 from database.models import Calendar as CalendarModel
 from database.models import EventLink
@@ -26,6 +28,26 @@ from database.utils import (
     get_event_by_google_id,
 )
 from utils.config import logger, settings
+
+
+class GoogleTime(TypedDict, total=False):
+    dateTime: str
+    date: str
+
+
+class GoogleEvent(TypedDict):
+    id: str
+    summary: str
+    start: GoogleTime
+    end: GoogleTime
+    description: str
+    location: str
+
+
+class EventSyncData(TypedDict):
+    google_event: GoogleEvent
+    db_event: EventLink | None
+    discord_event: ScheduledEvent | None
 
 
 class Calendar(commands.Cog):
@@ -73,16 +95,15 @@ class Calendar(commands.Cog):
                     session.delete(db_event)
                     session.commit()
                     logger.info(f"Deleted EventLink for Discord Event ID {event.id} as the event was deleted.")
-    
+
     @tasks.loop(hours=1)
     async def update_calendar(self):
+        # Catch everything so no exception ever escapes and kills this task loop forever;
+        # a failed run just gets logged and retried on the next hourly tick.
         creds = service_account.Credentials.from_service_account_file(
             settings.SERVICE_ACCOUNT_FILE,
             scopes=["https://www.googleapis.com/auth/calendar.readonly"],
         )
-
-        events_to_update = []
-        events_to_create = []
 
         service = build("calendar", "v3", credentials=creds)
 
@@ -91,13 +112,18 @@ class Calendar(commands.Cog):
         async with session_lock:
             with Session(engine) as session:
                 for calendar in get_calendars(session):
+                    # Never let a single calendar's failure abort the whole hourly run.
                     guild = self.bot.get_guild(calendar.discord_id)
 
                     # Skip if guild not found
                     if not guild:
+                        logger.debug(f"Guild {calendar.discord_id} not found in cache, skipping calendar {calendar.google_id}")
                         continue
 
                     logger.info(f"Updating calendar for {guild.name}")
+
+                    events_to_update: list[EventSyncData] = []
+                    events_to_create: list[EventSyncData] = []
 
                     events_result = (
                         service.events()
@@ -110,14 +136,14 @@ class Calendar(commands.Cog):
                         )
                         .execute()
                     )
-                    google_events = events_result.get("items", [])
+                    google_events = cast(list[GoogleEvent], events_result.get("items", []))
 
                     logger.info(f"Found {len(google_events)} events in Google Calendar")
 
                     for g_event in google_events:
                         event = get_event_by_google_id(session, g_event["id"])
 
-                        update_obj = {
+                        update_obj: EventSyncData = {
                             "google_event": g_event,
                             "db_event": event,
                             "discord_event": None
@@ -130,19 +156,28 @@ class Calendar(commands.Cog):
                             update_obj["discord_event"] = d_event
 
                             if not d_event:
+                                logger.debug(f"No Discord event found for google event {g_event['id']}, will create")
                                 events_to_create.append(update_obj)
                                 continue
 
                             # Check if there are changes
-                            if not compare_events(g_event, d_event):
+                            same = compare_events(g_event, d_event)
+                            logger.debug(
+                                f"Compared google event {g_event['id']} ({g_event.get('summary')}) "
+                                f"to discord event {d_event.id}: same={same} "
+                                f"(g_start={parse_google_time(g_event['start'])}, d_start={d_event.start_time}, "
+                                f"g_end={parse_google_time(g_event['end'])}, d_end={d_event.end_time})"
+                            )
+                            if not same:
                                 events_to_update.append(update_obj)
 
                         # Else set for creation
                         else:
+                            logger.debug(f"No EventLink found for google event {g_event['id']}, will create")
                             events_to_create.append(update_obj)
-                    
+
                     logger.info(f"Processing {len(events_to_update)} updates and {len(events_to_create)} creations")
-                    
+
                     # Process updates
                     for event_data in events_to_update:
                         g_event = event_data["google_event"]
@@ -151,10 +186,16 @@ class Calendar(commands.Cog):
                         if not d_event:
                             continue
 
-                        start_time = datetime.datetime.fromisoformat(g_event["start"].get("dateTime", g_event["start"].get("date")))
-                        end_time = datetime.datetime.fromisoformat(g_event["end"].get("dateTime", g_event["end"].get("date")))
-
                         try:
+                            db_event = event_data["db_event"]
+                            if not db_event:
+                                continue
+
+                            start_time = parse_google_time(g_event["start"])
+                            end_time = parse_google_time(g_event["end"])
+
+                            logger.debug(f"Editing discord event {d_event.id}: name={g_event['summary']!r}, start={start_time}, end={end_time}")
+
                             await d_event.edit(
                                 name=g_event["summary"],
                                 description=g_event.get("description", ""),
@@ -162,8 +203,8 @@ class Calendar(commands.Cog):
                                 end_time=end_time
                             )
 
-                            event_data["db_event"].discord_id = d_event.id
-                            session.add(event_data["db_event"])
+                            db_event.discord_id = d_event.id
+                            session.add(db_event)
                             session.commit()
                         except nextcord.Forbidden:
                             logger.warning(f"Missing permissions to edit event {d_event.id} in guild {guild.name}, probably modified manually.")
@@ -173,8 +214,10 @@ class Calendar(commands.Cog):
                         g_event = event_data["google_event"]
                         db_event = event_data["db_event"]
 
-                        start_time = datetime.datetime.fromisoformat(g_event["start"].get("dateTime", g_event["start"].get("date")))
-                        end_time = datetime.datetime.fromisoformat(g_event["end"].get("dateTime", g_event["end"].get("date")))
+                        start_time = parse_google_time(g_event["start"])
+                        end_time = parse_google_time(g_event["end"])
+
+                        logger.debug(f"Creating discord event for google event {g_event['id']}: name={g_event['summary']!r}, start={start_time}, end={end_time}")
 
                         d_event = await guild.create_scheduled_event(
                             name=g_event["summary"],
@@ -199,7 +242,6 @@ class Calendar(commands.Cog):
                         session.commit()
 
                         await asyncio.sleep(1)  # To avoid hitting rate limits
-
                     logger.info(f"Calendar update for {guild.name} complete.")
 
 
