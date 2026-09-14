@@ -23,9 +23,13 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --compile-bytecode
 
+RUN test -x /app/.venv/bin/alembic && test -x /app/.venv/bin/main
+
 FROM python:3.14-slim-trixie
 
 LABEL maintainer="Max Mecklin <max.mecklin@hewo.fi>"
+
+RUN useradd --create-home --uid 1000 app
 
 COPY docker-entrypoint.sh alembic.ini /app/
 COPY alembic /app/alembic
@@ -33,6 +37,8 @@ COPY alembic /app/alembic
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
 WORKDIR /app
+
+USER app
 
 RUN ["chmod", "+x", "/app/docker-entrypoint.sh"]
 
