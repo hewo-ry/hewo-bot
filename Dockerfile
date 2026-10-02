@@ -38,9 +38,9 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
 WORKDIR /app
 
-USER app
-
 RUN ["chmod", "+x", "/app/docker-entrypoint.sh"]
+
+USER app
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/.venv/bin/main"]
