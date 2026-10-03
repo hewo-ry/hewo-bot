@@ -27,6 +27,8 @@ FROM python:3.14-slim-trixie
 
 LABEL maintainer="Max Mecklin <max.mecklin@hewo.fi>"
 
+RUN useradd --create-home --uid 1000 app
+
 COPY docker-entrypoint.sh alembic.ini /app/
 COPY alembic /app/alembic
 
@@ -35,6 +37,8 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 WORKDIR /app
 
 RUN ["chmod", "+x", "/app/docker-entrypoint.sh"]
+
+USER app
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/.venv/bin/main"]
