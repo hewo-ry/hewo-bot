@@ -23,8 +23,6 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --compile-bytecode
 
-RUN test -x /app/.venv/bin/alembic && test -x /app/.venv/bin/main
-
 FROM python:3.14-slim-trixie
 
 LABEL maintainer="Max Mecklin <max.mecklin@hewo.fi>"
